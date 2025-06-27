@@ -298,55 +298,213 @@ public class AnthropicChatModel implements ChatModel {
 	}
 
 	private ChatResponse toChatResponse(ChatCompletionResponse chatCompletion, Usage usage) {
-
 		if (chatCompletion == null) {
 			logger.warn("Null chat completion returned");
 			return new ChatResponse(List.of());
 		}
 
-		List<Generation> generations = new ArrayList<>();
+		try {
+			ContentProcessingResult processingResult = processContentBlocks(chatCompletion);
+			List<Generation> generations = createGenerations(processingResult, chatCompletion.stopReason());
+
+			return new ChatResponse(generations, this.from(chatCompletion, usage));
+		}
+		catch (Exception e) {
+			logger.error("Error processing chat completion response", e);
+			// Return a minimal response to prevent complete failure
+			return new ChatResponse(
+					List.of(new Generation(new AssistantMessage("Error processing response", Map.of()),
+							ChatGenerationMetadata.builder().finishReason(chatCompletion.stopReason()).build())),
+					this.from(chatCompletion, usage));
+		}
+	}
+
+	private ContentProcessingResult processContentBlocks(ChatCompletionResponse chatCompletion) {
+		List<String> textContents = new ArrayList<>();
+		List<String> webSearchTexts = new ArrayList<>();
+		List<Generation> nonTextGenerations = new ArrayList<>();
 		List<AssistantMessage.ToolCall> toolCalls = new ArrayList<>();
+
 		for (ContentBlock content : chatCompletion.content()) {
-			switch (content.type()) {
-				case TEXT, TEXT_DELTA:
-					generations.add(new Generation(new AssistantMessage(content.text(), Map.of()),
-							ChatGenerationMetadata.builder().finishReason(chatCompletion.stopReason()).build()));
-					break;
-				case THINKING, THINKING_DELTA:
-					Map<String, Object> thinkingProperties = new HashMap<>();
-					thinkingProperties.put("signature", content.signature());
-					generations.add(new Generation(new AssistantMessage(content.thinking(), thinkingProperties),
-							ChatGenerationMetadata.builder().finishReason(chatCompletion.stopReason()).build()));
-					break;
-				case REDACTED_THINKING:
-					Map<String, Object> redactedProperties = new HashMap<>();
-					redactedProperties.put("data", content.data());
-					generations.add(new Generation(new AssistantMessage(null, redactedProperties),
-							ChatGenerationMetadata.builder().finishReason(chatCompletion.stopReason()).build()));
-					break;
-				case TOOL_USE:
-					var functionCallId = content.id();
-					var functionName = content.name();
-					var functionArguments = JsonParser.toJson(content.input());
-					toolCalls.add(
-							new AssistantMessage.ToolCall(functionCallId, "function", functionName, functionArguments));
-					break;
+			try {
+				switch (content.type()) {
+					case TEXT, TEXT_DELTA:
+						processTextContent(content, textContents);
+						break;
+					case THINKING, THINKING_DELTA:
+						processThinkingContent(content, nonTextGenerations, chatCompletion.stopReason());
+						break;
+					case REDACTED_THINKING:
+						processRedactedThinkingContent(content, nonTextGenerations, chatCompletion.stopReason());
+						break;
+					case TOOL_USE:
+						processToolUseContent(content, toolCalls);
+						break;
+					case SERVER_TOOL_USE:
+						processServerToolContent(content, webSearchTexts);
+						break;
+					case WEB_SEARCH_TOOL_RESULT:
+						processWebSearchContent(content, webSearchTexts);
+						break;
+					default:
+						logger.warn("Unknown content block type: {}", content.type());
+						break;
+				}
+			}
+			catch (Exception e) {
+				logger.error("Error processing content block of type: {}", content.type(), e);
+				// Continue processing other blocks
 			}
 		}
 
-		if (chatCompletion.stopReason() != null && generations.isEmpty()) {
-			Generation generation = new Generation(new AssistantMessage(null, Map.of()),
-					ChatGenerationMetadata.builder().finishReason(chatCompletion.stopReason()).build());
-			generations.add(generation);
+		return new ContentProcessingResult(textContents, webSearchTexts, nonTextGenerations, toolCalls);
+	}
+
+	private void processTextContent(ContentBlock content, List<String> textContents) {
+		String text = content.text();
+		if (text != null && !text.trim().isEmpty()) {
+			textContents.add(text);
+		}
+	}
+
+	private void processThinkingContent(ContentBlock content, List<Generation> nonTextGenerations, String stopReason) {
+		try {
+			Map<String, Object> thinkingProperties = new HashMap<>();
+			String signature = content.signature();
+			if (signature != null) {
+				thinkingProperties.put("signature", signature);
+			}
+
+			String thinking = content.thinking();
+			nonTextGenerations.add(new Generation(new AssistantMessage(thinking, thinkingProperties),
+					ChatGenerationMetadata.builder().finishReason(stopReason).build()));
+		}
+		catch (Exception e) {
+			logger.error("Error processing thinking content", e);
+		}
+	}
+
+	private void processRedactedThinkingContent(ContentBlock content, List<Generation> nonTextGenerations,
+			String stopReason) {
+		try {
+			Map<String, Object> redactedProperties = new HashMap<>();
+			Object data = content.data();
+			if (data != null) {
+				redactedProperties.put("data", data);
+			}
+
+			nonTextGenerations.add(new Generation(new AssistantMessage(null, redactedProperties),
+					ChatGenerationMetadata.builder().finishReason(stopReason).build()));
+		}
+		catch (Exception e) {
+			logger.error("Error processing redacted thinking content", e);
+		}
+	}
+
+	private void processToolUseContent(ContentBlock content, List<AssistantMessage.ToolCall> toolCalls) {
+		try {
+			String functionCallId = content.id();
+			String functionName = content.name();
+			Object input = content.input();
+
+			if (functionCallId != null && functionName != null && input != null) {
+				String functionArguments = JsonParser.toJson(input);
+				toolCalls
+					.add(new AssistantMessage.ToolCall(functionCallId, "function", functionName, functionArguments));
+			}
+			else {
+				logger.warn("Incomplete tool use content: id={}, name={}, input={}", functionCallId, functionName,
+						input);
+			}
+		}
+		catch (Exception e) {
+			logger.error("Error processing tool use content", e);
+		}
+	}
+
+	private void processServerToolContent(ContentBlock content, List<String> webSearchTexts) {
+		try {
+			Object contentObj = content.content();
+			if (contentObj != null) {
+				String serverToolContent = contentObj.toString();
+				if (!serverToolContent.trim().isEmpty()) {
+					webSearchTexts.add(serverToolContent);
+					logger.debug("Processed server tool content: {} characters", serverToolContent.length());
+				}
+			}
+		}
+		catch (Exception e) {
+			logger.error("Error processing server tool content", e);
+		}
+	}
+
+	private void processWebSearchContent(ContentBlock content, List<String> webSearchTexts) {
+		try {
+			Object contentObj = content.content();
+			if (contentObj != null) {
+				String webSearchContent = contentObj.toString();
+				if (!webSearchContent.trim().isEmpty()) {
+					webSearchTexts.add(webSearchContent);
+					logger.debug("Processed web search content: {} characters", webSearchContent.length());
+				}
+			}
+		}
+		catch (Exception e) {
+			logger.error("Error processing web search content", e);
+		}
+	}
+
+	private List<Generation> createGenerations(ContentProcessingResult result, String stopReason) {
+		List<Generation> generations = new ArrayList<>();
+
+		// Consolidate text and web search content into the first generation
+		List<String> allTextContent = new ArrayList<>();
+		allTextContent.addAll(result.textContents());
+		allTextContent.addAll(result.webSearchTexts());
+
+		if (!allTextContent.isEmpty()) {
+			try {
+				String consolidatedContent = String.join("\n", allTextContent);
+				generations.add(new Generation(new AssistantMessage(consolidatedContent, Map.of()),
+						ChatGenerationMetadata.builder().finishReason(stopReason).build()));
+
+				if (!result.webSearchTexts().isEmpty()) {
+					logger.debug("Consolidated {} text contents and {} web search contents",
+							result.textContents().size(), result.webSearchTexts().size());
+				}
+			}
+			catch (Exception e) {
+				logger.error("Error creating consolidated content generation", e);
+			}
 		}
 
-		if (!CollectionUtils.isEmpty(toolCalls)) {
-			AssistantMessage assistantMessage = new AssistantMessage("", Map.of(), toolCalls);
-			Generation toolCallGeneration = new Generation(assistantMessage,
-					ChatGenerationMetadata.builder().finishReason(chatCompletion.stopReason()).build());
-			generations.add(toolCallGeneration);
+		// Add other non-text generations
+		generations.addAll(result.nonTextGenerations());
+
+		// Add empty generation if no content was processed
+		if (stopReason != null && generations.isEmpty()) {
+			generations.add(new Generation(new AssistantMessage(null, Map.of()),
+					ChatGenerationMetadata.builder().finishReason(stopReason).build()));
 		}
-		return new ChatResponse(generations, this.from(chatCompletion, usage));
+
+		// Add tool call generation if present
+		if (!CollectionUtils.isEmpty(result.toolCalls())) {
+			try {
+				AssistantMessage assistantMessage = new AssistantMessage("", Map.of(), result.toolCalls());
+				Generation toolCallGeneration = new Generation(assistantMessage,
+						ChatGenerationMetadata.builder().finishReason(stopReason).build());
+				generations.add(toolCallGeneration);
+			}
+			catch (Exception e) {
+				logger.error("Error creating tool call generation", e);
+			}
+		}
+
+		return generations;
+	}
+
+	private record ContentProcessingResult(List<String> textContents, List<String> webSearchTexts,
+			List<Generation> nonTextGenerations, List<AssistantMessage.ToolCall> toolCalls) {
 	}
 
 	private ChatResponseMetadata from(AnthropicApi.ChatCompletionResponse result) {
@@ -450,6 +608,10 @@ public class AnthropicChatModel implements ChatModel {
 					this.defaultOptions.getToolCallbacks()));
 			requestOptions.setToolContext(ToolCallingChatOptions.mergeToolContext(runtimeOptions.getToolContext(),
 					this.defaultOptions.getToolContext()));
+			requestOptions.setWebSearchEnabled(ModelOptionsUtils.mergeOption(runtimeOptions.getWebSearchEnabled(),
+					this.defaultOptions.getWebSearchEnabled()));
+			requestOptions.setWebSearchOptions(ModelOptionsUtils.mergeOption(runtimeOptions.getWebSearchOptions(),
+					this.defaultOptions.getWebSearchOptions()));
 		}
 		else {
 			requestOptions.setHttpHeaders(this.defaultOptions.getHttpHeaders());
@@ -457,6 +619,8 @@ public class AnthropicChatModel implements ChatModel {
 			requestOptions.setToolNames(this.defaultOptions.getToolNames());
 			requestOptions.setToolCallbacks(this.defaultOptions.getToolCallbacks());
 			requestOptions.setToolContext(this.defaultOptions.getToolContext());
+			requestOptions.setWebSearchEnabled(this.defaultOptions.getWebSearchEnabled());
+			requestOptions.setWebSearchOptions(this.defaultOptions.getWebSearchOptions());
 		}
 
 		ToolCallingChatOptions.validateToolCallbacks(requestOptions.getToolCallbacks());
@@ -533,16 +697,32 @@ public class AnthropicChatModel implements ChatModel {
 
 		// Add the tool definitions to the request's tools parameter.
 		List<ToolDefinition> toolDefinitions = this.toolCallingManager.resolveToolDefinitions(requestOptions);
+		List<AnthropicApi.ToolSpec> allTools = new ArrayList<>();
+
+		// Add function tools
 		if (!CollectionUtils.isEmpty(toolDefinitions)) {
+			allTools.addAll(getFunctionTools(toolDefinitions));
+		}
+
+		// Add web search tool if enabled
+		if (Boolean.TRUE.equals(requestOptions.getWebSearchEnabled())) {
+			AnthropicApi.WebSearchTool webSearchTool = requestOptions.getWebSearchOptions();
+			if (webSearchTool == null) {
+				webSearchTool = new AnthropicApi.WebSearchTool();
+			}
+			allTools.add(webSearchTool);
+		}
+
+		if (!allTools.isEmpty()) {
 			request = ModelOptionsUtils.merge(request, this.defaultOptions, ChatCompletionRequest.class);
-			request = ChatCompletionRequest.from(request).tools(getFunctionTools(toolDefinitions)).build();
+			request = ChatCompletionRequest.from(request).tools(allTools).build();
 		}
 
 		return request;
 	}
 
-	private List<AnthropicApi.Tool> getFunctionTools(List<ToolDefinition> toolDefinitions) {
-		return toolDefinitions.stream().map(toolDefinition -> {
+	private List<AnthropicApi.ToolSpec> getFunctionTools(List<ToolDefinition> toolDefinitions) {
+		return toolDefinitions.stream().<AnthropicApi.ToolSpec>map(toolDefinition -> {
 			var name = toolDefinition.name();
 			var description = toolDefinition.description();
 			String inputSchema = toolDefinition.inputSchema();

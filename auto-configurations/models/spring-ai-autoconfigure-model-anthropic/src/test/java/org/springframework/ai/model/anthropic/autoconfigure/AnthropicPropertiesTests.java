@@ -76,7 +76,8 @@ public class AnthropicPropertiesTests {
 
 				"spring.ai.anthropic.chat.options.temperature=0.55",
 				"spring.ai.anthropic.chat.options.top-p=0.56",
-				"spring.ai.anthropic.chat.options.top-k=100"
+				"spring.ai.anthropic.chat.options.top-k=100",
+				"spring.ai.anthropic.chat.options.web-search-enabled=true"
 				)
 			// @formatter:on
 			.withConfiguration(AutoConfigurations.of(SpringAiRetryAutoConfiguration.class,
@@ -95,6 +96,7 @@ public class AnthropicPropertiesTests {
 				assertThat(chatProperties.getOptions().getTopK()).isEqualTo(100);
 
 				assertThat(chatProperties.getOptions().getMetadata().userId()).isEqualTo("MyUserId");
+				assertThat(chatProperties.getOptions().getWebSearchEnabled()).isTrue();
 			});
 	}
 

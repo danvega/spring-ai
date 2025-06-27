@@ -82,6 +82,17 @@ public class AnthropicChatOptions implements ToolCallingChatOptions {
 	@JsonIgnore
 	private Map<String, Object> toolContext = new HashMap<>();
 
+	/**
+	 * Whether to enable Anthropic's built-in web search functionality.
+	 */
+	@JsonIgnore
+	private Boolean webSearchEnabled;
+
+	/**
+	 * Configuration options for web search functionality.
+	 */
+	@JsonIgnore
+	private AnthropicApi.WebSearchTool webSearchOptions;
 
 	/**
 	 * Optional HTTP headers to be added to the chat completion request.
@@ -110,6 +121,8 @@ public class AnthropicChatOptions implements ToolCallingChatOptions {
 			.toolNames(fromOptions.getToolNames() != null ? new HashSet<>(fromOptions.getToolNames()) : null)
 			.internalToolExecutionEnabled(fromOptions.getInternalToolExecutionEnabled())
 			.toolContext(fromOptions.getToolContext() != null ? new HashMap<>(fromOptions.getToolContext()) : null)
+			.webSearchEnabled(fromOptions.getWebSearchEnabled())
+			.webSearchOptions(fromOptions.getWebSearchOptions())
 			.httpHeaders(fromOptions.getHttpHeaders() != null ? new HashMap<>(fromOptions.getHttpHeaders()) : null)
 			.build();
 	}
@@ -251,6 +264,24 @@ public class AnthropicChatOptions implements ToolCallingChatOptions {
 	}
 
 	@JsonIgnore
+	public Boolean getWebSearchEnabled() {
+		return this.webSearchEnabled;
+	}
+
+	public void setWebSearchEnabled(Boolean webSearchEnabled) {
+		this.webSearchEnabled = webSearchEnabled;
+	}
+
+	@JsonIgnore
+	public AnthropicApi.WebSearchTool getWebSearchOptions() {
+		return this.webSearchOptions;
+	}
+
+	public void setWebSearchOptions(AnthropicApi.WebSearchTool webSearchOptions) {
+		this.webSearchOptions = webSearchOptions;
+	}
+
+	@JsonIgnore
 	public Map<String, String> getHttpHeaders() {
 		return this.httpHeaders;
 	}
@@ -282,6 +313,8 @@ public class AnthropicChatOptions implements ToolCallingChatOptions {
 				&& Objects.equals(this.toolNames, that.toolNames)
 				&& Objects.equals(this.internalToolExecutionEnabled, that.internalToolExecutionEnabled)
 				&& Objects.equals(this.toolContext, that.toolContext)
+				&& Objects.equals(this.webSearchEnabled, that.webSearchEnabled)
+				&& Objects.equals(this.webSearchOptions, that.webSearchOptions)
 				&& Objects.equals(this.httpHeaders, that.httpHeaders);
 	}
 
@@ -289,7 +322,7 @@ public class AnthropicChatOptions implements ToolCallingChatOptions {
 	public int hashCode() {
 		return Objects.hash(this.model, this.maxTokens, this.metadata, this.stopSequences, this.temperature, this.topP,
 				this.topK, this.thinking, this.toolCallbacks, this.toolNames, this.internalToolExecutionEnabled,
-				this.toolContext, this.httpHeaders);
+				this.toolContext, this.webSearchEnabled, this.webSearchOptions, this.httpHeaders);
 	}
 
 	public static class Builder {
@@ -381,6 +414,26 @@ public class AnthropicChatOptions implements ToolCallingChatOptions {
 			else {
 				this.options.toolContext.putAll(toolContext);
 			}
+			return this;
+		}
+
+		public Builder webSearchEnabled(Boolean webSearchEnabled) {
+			this.options.setWebSearchEnabled(webSearchEnabled);
+			return this;
+		}
+
+		public Builder webSearchOptions(AnthropicApi.WebSearchTool webSearchOptions) {
+			this.options.setWebSearchOptions(webSearchOptions);
+			return this;
+		}
+
+		public Builder webSearchOptions(Integer maxUses) {
+			this.options.setWebSearchOptions(new AnthropicApi.WebSearchTool(maxUses));
+			return this;
+		}
+
+		public Builder webSearchOptions(Integer maxUses, List<String> allowedDomains, List<String> blockedDomains) {
+			this.options.setWebSearchOptions(new AnthropicApi.WebSearchTool(maxUses, allowedDomains, blockedDomains));
 			return this;
 		}
 

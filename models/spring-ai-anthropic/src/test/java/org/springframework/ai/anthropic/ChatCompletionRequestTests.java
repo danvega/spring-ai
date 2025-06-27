@@ -60,4 +60,29 @@ public class ChatCompletionRequestTests {
 		assertThat(request.temperature()).isEqualTo(99.9);
 	}
 
+	@Test
+	public void createRequestWithWebSearchTool() {
+
+		var client = AnthropicChatModel.builder()
+			.anthropicApi(AnthropicApi.builder().apiKey("TEST").build())
+			.defaultOptions(AnthropicChatOptions.builder()
+				.model("DEFAULT_MODEL")
+				.webSearchEnabled(true)
+				.webSearchOptions(new AnthropicApi.WebSearchTool(5))
+				.build())
+			.build();
+
+		var prompt = client.buildRequestPrompt(new Prompt("Search for the latest AI news"));
+
+		var request = client.createRequest(prompt, false);
+
+		assertThat(request.tools()).hasSize(1);
+		assertThat(request.tools().get(0)).isInstanceOf(AnthropicApi.WebSearchTool.class);
+
+		var webSearchTool = (AnthropicApi.WebSearchTool) request.tools().get(0);
+		assertThat(webSearchTool.type()).isEqualTo("web_search_20250305");
+		assertThat(webSearchTool.name()).isEqualTo("web_search");
+		assertThat(webSearchTool.maxUses()).isEqualTo(5);
+	}
+
 }

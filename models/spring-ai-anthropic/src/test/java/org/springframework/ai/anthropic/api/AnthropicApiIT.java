@@ -52,7 +52,7 @@ public class AnthropicApiIT {
 
 	AnthropicApi anthropicApi = AnthropicApi.builder().apiKey(System.getenv("ANTHROPIC_API_KEY")).build();
 
-	List<AnthropicApi.Tool> tools = List.of(new AnthropicApi.Tool("getCurrentWeather",
+	List<AnthropicApi.ToolSpec> tools = List.of(new AnthropicApi.Tool("getCurrentWeather",
 			"Get the weather in location. Return temperature in 30°F or 30°C format.", ModelOptionsUtils.jsonToMap("""
 					{
 						"type": "object",

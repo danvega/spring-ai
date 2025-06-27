@@ -524,7 +524,7 @@ public final class AnthropicApi {
 		@JsonProperty("temperature") Double temperature,
 		@JsonProperty("top_p") Double topP,
 		@JsonProperty("top_k") Integer topK,
-		@JsonProperty("tools") List<Tool> tools,
+		@JsonProperty("tools") List<ToolSpec> tools,
 		@JsonProperty("thinking") ThinkingConfig thinking) {
 		// @formatter:on
 
@@ -595,7 +595,7 @@ public final class AnthropicApi {
 
 		private Integer topK;
 
-		private List<Tool> tools;
+		private List<ToolSpec> tools;
 
 		private ChatCompletionRequest.ThinkingConfig thinking;
 
@@ -672,7 +672,7 @@ public final class AnthropicApi {
 			return this;
 		}
 
-		public ChatCompletionRequestBuilder tools(List<Tool> tools) {
+		public ChatCompletionRequestBuilder tools(List<ToolSpec> tools) {
 			this.tools = tools;
 			return this;
 		}
@@ -758,7 +758,7 @@ public final class AnthropicApi {
 
 		// tool_result response only
 		@JsonProperty("tool_use_id") String toolUseId,
-		@JsonProperty("content") String content,
+		@JsonProperty("content") Object content,
 
 		// Thinking only
 		@JsonProperty("signature") String signature,
@@ -810,7 +810,7 @@ public final class AnthropicApi {
 		 * @param toolUseId The id of the tool use.
 		 * @param content The content of the tool result.
 		 */
-		public ContentBlock(Type type, String toolUseId, String content) {
+		public ContentBlock(Type type, String toolUseId, Object content) {
 			this(type, null, null, null, null, null, null, toolUseId, content, null, null, null);
 		}
 
@@ -910,7 +910,19 @@ public final class AnthropicApi {
 			 * Redacted Thinking message.
 			 */
 			@JsonProperty("redacted_thinking")
-			REDACTED_THINKING("redacted_thinking");
+			REDACTED_THINKING("redacted_thinking"),
+
+			/**
+			 * Server tool use message.
+			 */
+			@JsonProperty("server_tool_use")
+			SERVER_TOOL_USE("server_tool_use"),
+
+			/**
+			 * Web search tool result message.
+			 */
+			@JsonProperty("web_search_tool_result")
+			WEB_SEARCH_TOOL_RESULT("web_search_tool_result");
 
 			public final String value;
 
@@ -964,11 +976,25 @@ public final class AnthropicApi {
 	}
 
 	///////////////////////////////////////
-	/// CONTENT_BLOCK EVENTS
+	/// TOOLS
 	///////////////////////////////////////
 
 	/**
-	 * Tool description.
+	 * Common interface for all tools that can be sent to Anthropic API. Uses Jackson
+	 * polymorphic serialization to handle different tool types.
+	 */
+	@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXISTING_PROPERTY, property = "type",
+			visible = true)
+	@JsonSubTypes({ @JsonSubTypes.Type(value = Tool.class, name = "function"),
+			@JsonSubTypes.Type(value = WebSearchTool.class, name = "web_search_20250305") })
+	public sealed interface ToolSpec permits Tool, WebSearchTool {
+
+		String name();
+
+	}
+
+	/**
+	 * Tool description for function tools.
 	 *
 	 * @param name The name of the tool.
 	 * @param description A description of the tool.
@@ -977,10 +1003,101 @@ public final class AnthropicApi {
 	@JsonInclude(Include.NON_NULL)
 	public record Tool(
 	// @formatter:off
+		@JsonProperty("type") String type,
 		@JsonProperty("name") String name,
 		@JsonProperty("description") String description,
-		@JsonProperty("input_schema") Map<String, Object> inputSchema) {
+		@JsonProperty("input_schema") Map<String, Object> inputSchema) implements ToolSpec {
 		// @formatter:on
+
+		/**
+		 * Creates a function tool with default type.
+		 */
+		public Tool(String name, String description, Map<String, Object> inputSchema) {
+			this("function", name, description, inputSchema);
+		}
+	}
+
+	/**
+	 * Web search tool configuration for enabling Anthropic's built-in web search
+	 * capability.
+	 *
+	 * @param type The tool type, must be "web_search_20250305".
+	 * @param name The tool name, must be "web_search".
+	 * @param maxUses Optional maximum number of web search calls allowed.
+	 * @param allowedDomains Optional list of domains to restrict search results to.
+	 * @param blockedDomains Optional list of domains to exclude from search results.
+	 * @param userLocation Optional user location context for search localization.
+	 */
+	@JsonInclude(Include.NON_NULL)
+	public record WebSearchTool(
+	// @formatter:off
+		@JsonProperty("type") String type,
+		@JsonProperty("name") String name,
+		@JsonProperty("max_uses") Integer maxUses,
+		@JsonProperty("allowed_domains") List<String> allowedDomains,
+		@JsonProperty("blocked_domains") List<String> blockedDomains,
+		@JsonProperty("user_location") UserLocation userLocation) implements ToolSpec {
+		// @formatter:on
+
+		/**
+		 * Creates a basic web search tool with default settings.
+		 */
+		public WebSearchTool() {
+			this("web_search_20250305", "web_search", null, null, null, null);
+		}
+
+		/**
+		 * Creates a web search tool with maximum usage limit.
+		 * @param maxUses The maximum number of search calls allowed.
+		 */
+		public WebSearchTool(Integer maxUses) {
+			this("web_search_20250305", "web_search", maxUses, null, null, null);
+		}
+
+		/**
+		 * Creates a web search tool with domain filtering.
+		 * @param maxUses The maximum number of search calls allowed.
+		 * @param allowedDomains List of domains to restrict results to.
+		 * @param blockedDomains List of domains to exclude from results.
+		 */
+		public WebSearchTool(Integer maxUses, List<String> allowedDomains, List<String> blockedDomains) {
+			this("web_search_20250305", "web_search", maxUses, allowedDomains, blockedDomains, null);
+		}
+	}
+
+	///////////////////////////////////////
+	/// CONTENT_BLOCK EVENTS
+	///////////////////////////////////////
+
+	/**
+	 * User location context for web search localization.
+	 *
+	 * @param type The location type, typically "approximate".
+	 * @param city The city name.
+	 * @param region The region or state name.
+	 * @param country The country name.
+	 * @param timezone The timezone identifier.
+	 */
+	@JsonInclude(Include.NON_NULL)
+	public record UserLocation(
+	// @formatter:off
+		@JsonProperty("type") String type,
+		@JsonProperty("city") String city,
+		@JsonProperty("region") String region,
+		@JsonProperty("country") String country,
+		@JsonProperty("timezone") String timezone) {
+		// @formatter:on
+
+		/**
+		 * Creates an approximate user location.
+		 * @param city The city name.
+		 * @param region The region or state name.
+		 * @param country The country name.
+		 * @param timezone The timezone identifier.
+		 */
+		public UserLocation(String city, String region, String country, String timezone) {
+			this("approximate", city, region, country, timezone);
+		}
 	}
 
 	// CB START EVENT
